@@ -1,29 +1,23 @@
 ﻿using System.Collections;
 using System;
-using System.Diagnostics.Contracts;
 using System.Diagnostics.CodeAnalysis;
 
 namespace Fitbie.BlackboardTable;
 
-public class Blackboard<TKey, TValue>
+public class Blackboard<TKey, TValue> /*: ICollection<BlackboardPair<TKey, TValue>*/
 {
     private struct Entry // Holds actual data of Blackboard.
     {
         public int hashCode; // Lower 31 bits of hash code, -1 if unused.
         public int next; // Index of next entry, -1 if last.
         public TKey? key; // Key of entry.
-        public TValue? value; // Value of entry.
 
-        private LinkedList<TValue> values; // Backing field for initialization.
-        public LinkedList<TValue> Values  // Linked values of entry.
+        public IDirectionalCollection<TValue> Values;
+
+        public Entry(bool fifo)
         {
-            get
-            {
-                values ??= new();
-                return values;
-            }
+            Values = fifo ? new DirectionalQueue<TValue>() : new DirectionalStack<TValue>();
         }
-
     }
 
     private int[]? buckets; // Each bucket store idx of its' entry. Collided Entries chained by 'next' field index. 
@@ -31,37 +25,48 @@ public class Blackboard<TKey, TValue>
 
     // Determines FIFO / LIFO logic. Depends on this value we either add values to the start of LinkedList or the end.
     //  We always get values from the end of LinkedList.
-    private bool fifo;
+    private readonly bool fifo;
 
-    private int count; // Total amount of elements in blackboard.
+    private int count; // Total amount of existing entries in blackboard (including freeCount).
     private int version; // To prevent collection changing while enumerating.
     private int freeList; // Idx of first free entry. Free entries index field points to next free entry.
     private int freeCount; // Count of all free entries.
-    private IEqualityComparer<TKey> comparer; // For EqualityComparer.Default optimization to use IEquatable if there is one.
-    private object _syncRoot;
+    private readonly IEqualityComparer<TKey> comparer; // For EqualityComparer.Default optimization to use IEquatable if there is one.
+    private object? _syncRoot;
 
 
-    public Blackboard() : this(0, null, true) {}
+    #region Constructors
 
-    public Blackboard(int capacity) : this(capacity, null, true) {}
+    public Blackboard(bool fifo) : this(fifo, 0, null) {}
 
-    public Blackboard(IEqualityComparer<TKey> comparer) : this(0, comparer, true) {}
+    public Blackboard(bool fifo, int capacity) : this(fifo, capacity, null) {}
 
-    // public Blackboard(IDictionary<TKey,TValue> dictionary) : this(dictionary, null) {}
+    public Blackboard(bool fifo, IEqualityComparer<TKey> comparer) : this(fifo, 0, comparer) {}
 
-    // public Blackboard(IDictionary<TKey,TValue>? dictionary, IEqualityComparer<TKey>? comparer) :
-    //     this(dictionary != null ? dictionary.Count: 0, comparer, true) 
-    // {
-    //     ArgumentNullException.ThrowIfNull(dictionary);
+    public Blackboard(bool fifo, IDictionary<TKey,TValue>? dictionary, IEqualityComparer<TKey>? comparer) :
+        this(fifo, dictionary != null ? dictionary.Count : 0, comparer) 
+    {
+        ArgumentNullException.ThrowIfNull(dictionary);
 
-    //     foreach (KeyValuePair<TKey,TValue> pair in dictionary)
-    //     {
-    //         Add(pair.Key, pair.Value);
-    //     }
-    // }
-
+        foreach (KeyValuePair<TKey,TValue> pair in dictionary)
+        {
+            Pin(pair.Key, pair.Value);
+        }
+    }
+    
+    public Blackboard(Blackboard<TKey, TValue> blackboard) :
+        this(blackboard.fifo, blackboard.entries.Length, null) 
+    {
+        for (int i = 0; i < blackboard.entries.Length; i++)
+        {
+            foreach (var val in blackboard.entries[i].Values)
+            {
+                Pin(blackboard.entries[i].key, val);
+            }
+        }
+    }
      
-    public Blackboard(int capacity, IEqualityComparer<TKey>? comparer, bool fifo) 
+    public Blackboard(bool fifo, int capacity, IEqualityComparer<TKey>? comparer) 
     {
         ArgumentOutOfRangeException.ThrowIfNegative(capacity);
         
@@ -70,10 +75,13 @@ public class Blackboard<TKey, TValue>
         this.fifo = fifo;
     }
 
-        
-    // public IEqualityComparer<TKey> Comparer => comparer;
+    #endregion
+
+    #region Interfaces
+    /*
+    public IEqualityComparer<TKey> Comparer => comparer;
     
-    // public int Count => count - freeCount;
+    public int Count => count - freeCount;
 
     // // ICollection<TKey> IDictionary<TKey, TValue>.Keys {
     // //     get {                
@@ -91,7 +99,6 @@ public class Blackboard<TKey, TValue>
 
     // // public ValueCollection Values {
     // //     get {
-    // //         Contract.Ensures(Contract.Result<ValueCollection>() != null);
     // //         if (values == null) values = new ValueCollection(this);
     // //         return values;
     // //     }
@@ -111,68 +118,72 @@ public class Blackboard<TKey, TValue>
     // //     }
     // // }
 
+
     // bool IDictionary<TKey, TValue>.Remove(TKey key) 
     // {
-    //     return Detach(key) == null;
+    //     return TryDetach(key, out var _);
     // }
+
 
     // TValue IDictionary<TKey, TValue>.this[TKey key]
     // {
-    //     get 
-    //     {
-    //         int i = FindEntry(key);
-    //         if (i >= 0) 
-    //         {
-    //             // If First In First Out - return value from first node, otherwise - last.
-    //             return fifo ? entries[i].Values.GetRemoveFirst() : entries[i].Values.GetRemoveLast();
-    //         }
-
-    //         throw new KeyNotFoundException();
-    //     }
-
+    //     get => Peek(key);
     //     set => Pin(key, value);
     // }
+
+
+    // bool IDictionary<TKey, TValue>.TryGetValue(TKey key, [NotNullWhen(true)] out TValue value)
+    // {
+    //     return TryPeek(key, out value);
+    // }
+
 
     // void IDictionary<TKey, TValue>.Add(TKey key, TValue value)
     // {
     //     Pin(key, value);
     // }
 
-    // void ICollection<KeyValuePair<TKey, TValue>>.Add(KeyValuePair<TKey, TValue> keyValuePair)
-    // {
-    //     Pin(keyValuePair.Key, keyValuePair.Value);
-    // }
 
-    // bool ICollection<KeyValuePair<TKey, TValue>>.Contains(KeyValuePair<TKey, TValue> keyValuePair)
-    // {
-    //     int i = FindEntry(keyValuePair.Key);
-    //     if(i >= 0 && EqualityComparer<TValue>.Default.Equals(entries[i].value, keyValuePair.Value)) {
-    //         return true;
-    //     }
-    //     return false;
-    // }
+    void ICollection<BlackboardPair<TKey, TValue>>.Add(BlackboardPair<TKey, TValue>)
+    {
+        int entryIdx = FindEntry(keyValuePair.Key);
+        if (entryIdx > -1)
+        {
 
-    // bool ICollection<KeyValuePair<TKey, TValue>>.Remove(KeyValuePair<TKey, TValue> keyValuePair)
-    // {
-    //     int i = FindEntry(keyValuePair.Key);
-    //     if( i >= 0 && EqualityComparer<TValue>.Default.Equals(entries[i].value, keyValuePair.Value))
-    //     {
-    //         Remove(keyValuePair.Key);
-    //         return true;
-    //     }
-    //     return false;
-    // }
+        }
+    }
 
-    // public void Clear() {
-    //     if (count > 0) {
-    //         for (int i = 0; i < buckets.Length; i++) buckets[i] = -1;
-    //         Array.Clear(entries, 0, count);
-    //         freeList = -1;
-    //         count = 0;
-    //         freeCount = 0;
-    //         version++;
-    //     }
-    // }
+
+    bool ICollection<BlackboardPair<TKey, TValue>>.Contains(BlackboardPair<TKey, TValue> item)
+    {
+        int entryIdx = FindEntry(keyValuePair.Key);
+        if (entryIdx > -1)
+        {
+            var comparer = EqualityComparer<TValue>.Default;
+            foreach (var item in entries[entryIdx].Values)
+            {
+                if (keyValuePair.Value == null && item == null) { return true; }
+                if (comparer.Equals(item, keyValuePair.Value)) { return true; }
+            }
+        }
+        return false;
+    }
+
+    bool ICollection<KeyValuePair<TKey, TValue>>.Remove(KeyValuePair<TKey, TValue> keyValuePair)
+    {
+        return TryDetach(keyValuePair.Key, out var _);
+    }
+
+    public void Clear() {
+        if (count > 0) {
+            for (int i = 0; i < buckets.Length; i++) { buckets[i] = -1; }
+            Array.Clear(entries, 0, count);
+            freeList = -1;
+            count = 0;
+            freeCount = 0;
+            version++;
+        }
+    }
 
     // public bool ContainsKey(TKey key) {
     //     return FindEntry(key) >= 0;
@@ -293,14 +304,6 @@ public class Blackboard<TKey, TValue>
     //     get { return false; }
     // }
 
-    // object ICollection.SyncRoot { 
-    //     get { 
-    //         if( _syncRoot == null) {
-    //             System.Threading.Interlocked.CompareExchange<Object>(ref _syncRoot, new Object(), null);    
-    //         }
-    //         return _syncRoot; 
-    //     }
-    // }
 
     // bool IDictionary.IsFixedSize {
     //     get { return false; }
@@ -400,7 +403,67 @@ public class Blackboard<TKey, TValue>
     //         Remove((TKey)key);
     //     }
     // }
+    */
+    #endregion
     
+
+    [MemberNotNull(nameof(entries))]
+    protected virtual void Initialize(int capacity)
+    {
+        int size = PrimeHelper.GetPrime(capacity);
+        buckets = new int[size];
+        entries = new Entry[size];
+        for (int i = 0; i < size; i++)
+        {
+            buckets[i] = -1;
+            entries[i] = new(fifo);
+        }
+
+        
+        freeList = -1;
+    }
+
+
+    private void Resize()
+    {
+        Resize(PrimeHelper.ExpandPrime(count), false);
+    }
+
+
+    private void Resize(int newSize, bool forceNewHashCodes)
+    {
+        int[] newBuckets = new int[newSize];
+        for (int i = 0; i < newBuckets.Length; i++) 
+        {
+            newBuckets[i] = -1;
+        }
+
+        Entry[] newEntries = new Entry[newSize];
+        Array.Copy(entries, 0, newEntries, 0, count);
+        if(forceNewHashCodes) 
+        {
+            for (int i = 0; i < count; i++)
+            {
+                if(newEntries[i].hashCode != -1) 
+                {
+                    newEntries[i].hashCode = (comparer.GetHashCode(newEntries[i].key) & 0x7FFFFFFF);
+                }
+            }
+        }
+
+        for (int i = 0; i < count; i++)
+        {
+            if (newEntries[i].hashCode >= 0) 
+            {
+                int bucket = newEntries[i].hashCode % newSize;
+                newEntries[i].next = newBuckets[bucket];
+                newBuckets[bucket] = i;
+            }
+        }
+        buckets = newBuckets;
+        entries = newEntries;
+    }
+
 
     public virtual void Pin(TKey key, TValue value)
     {
@@ -418,7 +481,7 @@ public class Blackboard<TKey, TValue>
         {
             if (entries[i].hashCode == hashCode && comparer.Equals(entries[i].key, key))
             {
-                entries[i].Values.AddTo(value, fifo);
+                entries[i].Values.Put(value);
                 version++;
                 return;
             }
@@ -428,7 +491,7 @@ public class Blackboard<TKey, TValue>
         if (freeCount > 0) 
         {
             index = freeList;
-            freeList = entries[index].next;
+            freeList = entries[freeList].next;
             freeCount--;
         }
         else 
@@ -445,7 +508,7 @@ public class Blackboard<TKey, TValue>
         entries[index].hashCode = hashCode;
         entries[index].next = buckets[targetBucket];
         entries[index].key = key;
-        entries[index].Values.AddTo(value, fifo);
+        entries[index].Values.Put(value);
         buckets[targetBucket] = index;
         version++;
 
@@ -474,15 +537,33 @@ public class Blackboard<TKey, TValue>
 
     }
 
+    public bool TryPeek(TKey key, [NotNullWhen(true)]out TValue? result)
+    {
+        int entryIdx = FindEntry(key);
+        if (entryIdx > -1)
+        {
+            return entries[entryIdx].Values.TryPeek(out result);
+        }
+
+        result = default;
+        return false;
+    }
+
+
     public TValue? Peek(TKey key)
     {
-        
+        int entryIdx = FindEntry(key);
+        if (entryIdx > -1)
+        {
+            return entries[entryIdx].Values.Peek();
+        }
+
+        return default;
     }
+
 
     public bool TryDetach(TKey key, [NotNullWhen(true)] out TValue? result)
     {
-        result = default;
-
         int entry = FindEntry(key);
         if (entry >= 0)
         {
@@ -490,6 +571,7 @@ public class Blackboard<TKey, TValue>
             return true;
         }
         
+        result = default;
         return false;
     }
 
@@ -540,32 +622,6 @@ public class Blackboard<TKey, TValue>
     }
 
 
-    public bool TryGetValue(TKey key, out TValue value) {
-        int i = FindEntry(key);
-        if (i >= 0) {
-            value = entries[i].value;
-            return true;
-        }
-        value = default;
-        return false;
-    }
-
-
-    [MemberNotNull(nameof(entries))]
-    protected virtual void Initialize(int capacity)
-    {
-        int size = PrimeHelper.GetPrime(capacity);
-        buckets = new int[size];
-        for (int i = 0; i < buckets.Length; i++)
-        {
-            buckets[i] = -1;
-        }
-
-        entries = new Entry[size];
-        freeList = -1;
-    }
-
-
     private int FindEntry(TKey key)
     {
         ArgumentNullException.ThrowIfNull(key);
@@ -579,48 +635,6 @@ public class Blackboard<TKey, TValue>
             }
         }
         return -1;
-    }
-
-
-    private void Resize()
-    {
-        Resize(PrimeHelper.ExpandPrime(count), false);
-    }
-
-
-    private void Resize(int newSize, bool forceNewHashCodes)
-    {
-        Contract.Assert(newSize >= entries.Length);
-        int[] newBuckets = new int[newSize];
-        for (int i = 0; i < newBuckets.Length; i++) 
-        {
-            newBuckets[i] = -1;
-        }
-
-        Entry[] newEntries = new Entry[newSize];
-        Array.Copy(entries, 0, newEntries, 0, count);
-        if(forceNewHashCodes) 
-        {
-            for (int i = 0; i < count; i++)
-            {
-                if(newEntries[i].hashCode != -1) 
-                {
-                    newEntries[i].hashCode = (comparer.GetHashCode(newEntries[i].key) & 0x7FFFFFFF);
-                }
-            }
-        }
-
-        for (int i = 0; i < count; i++)
-        {
-            if (newEntries[i].hashCode >= 0) 
-            {
-                int bucket = newEntries[i].hashCode % newSize;
-                newEntries[i].next = newBuckets[bucket];
-                newBuckets[bucket] = i;
-            }
-        }
-        buckets = newBuckets;
-        entries = newEntries;
     }
 
 }
