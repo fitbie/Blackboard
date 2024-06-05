@@ -1,5 +1,3 @@
-using System.Collections;
-
 namespace Fitbie.BlackboardTable;
 
 internal class DirectionalQueue<T> : Queue<T>, IDirectionalCollection<T>

@@ -11,4 +11,5 @@ internal interface IDirectionalCollection<T> : IEnumerable<T>
     public bool TryTake(out T? result);
     public T Peek();
     public bool TryPeek(out T? result);
+    public int Count { get; }
 }
