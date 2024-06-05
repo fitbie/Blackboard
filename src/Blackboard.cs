@@ -10,7 +10,7 @@ public class Blackboard<TKey, TValue> /*: ICollection<BlackboardPair<TKey, TValu
     {
         public int hashCode; // Lower 31 bits of hash code, -1 if unused.
         public int next; // Index of next entry, -1 if last.
-        public TKey? key; // Key of entry.
+        public TKey key; // Key of entry.
 
         public IDirectionalCollection<TValue> Values;
 
@@ -25,7 +25,7 @@ public class Blackboard<TKey, TValue> /*: ICollection<BlackboardPair<TKey, TValu
 
     // Determines FIFO / LIFO logic. Depends on this value we either add values to the start of LinkedList or the end.
     //  We always get values from the end of LinkedList.
-    private readonly bool fifo;
+    private readonly bool fifo = true;
 
     private int count; // Total amount of existing entries in blackboard (including freeCount).
     private int version; // To prevent collection changing while enumerating.
@@ -59,9 +59,9 @@ public class Blackboard<TKey, TValue> /*: ICollection<BlackboardPair<TKey, TValu
     {
         for (int i = 0; i < blackboard.entries.Length; i++)
         {
-            foreach (var val in blackboard.entries[i].Values)
+            while (blackboard.entries[i].Values.Count > 0)
             {
-                Pin(blackboard.entries[i].key, val);
+                Pin(blackboard.entries[i].key, blackboard.entries[i].Values.Take());
             }
         }
     }
@@ -70,9 +70,9 @@ public class Blackboard<TKey, TValue> /*: ICollection<BlackboardPair<TKey, TValu
     {
         ArgumentOutOfRangeException.ThrowIfNegative(capacity);
         
-        Initialize(capacity);
-        this.comparer = comparer ?? EqualityComparer<TKey>.Default;
         this.fifo = fifo;
+        this.comparer = comparer ?? EqualityComparer<TKey>.Default;
+        Initialize(capacity);
     }
 
     #endregion
@@ -418,7 +418,6 @@ public class Blackboard<TKey, TValue> /*: ICollection<BlackboardPair<TKey, TValu
             buckets[i] = -1;
             entries[i] = new(fifo);
         }
-
         
         freeList = -1;
     }
@@ -440,6 +439,11 @@ public class Blackboard<TKey, TValue> /*: ICollection<BlackboardPair<TKey, TValu
 
         Entry[] newEntries = new Entry[newSize];
         Array.Copy(entries, 0, newEntries, 0, count);
+        for (int i = count; i < newSize; i++)
+        {
+            newEntries[i] = new(fifo);
+        }
+
         if(forceNewHashCodes) 
         {
             for (int i = 0; i < count; i++)
@@ -588,7 +592,7 @@ public class Blackboard<TKey, TValue> /*: ICollection<BlackboardPair<TKey, TValu
         {
             if (entries[i].hashCode == hashCode && comparer.Equals(entries[i].key, key))
             {
-                var result = entries[i].Values.GetRemoveLast(); // We always remove last, bc LIFO-FIFO logic determined by Pin().
+                var result = entries[i].Values.Take(); // We always remove last, bc LIFO-FIFO logic determined by Pin().
 
                 if (entries[i].Values.Count <= 0) // Clear entry only if we take last element from its' linked list.
                 {
@@ -605,7 +609,6 @@ public class Blackboard<TKey, TValue> /*: ICollection<BlackboardPair<TKey, TValu
 
                     entries[i].hashCode = -1;
                     entries[i].key = default;
-                    entries[i].value = default;
 
                     // Now freelist points to current entry.
                     entries[i].next = freeList;
