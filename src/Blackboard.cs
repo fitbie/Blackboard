@@ -1,10 +1,9 @@
 ﻿using System.Collections;
-using System;
 using System.Diagnostics.CodeAnalysis;
 
 namespace Fitbie.BlackboardTable;
 
-public class Blackboard<TKey, TValue> /*: ICollection<BlackboardPair<TKey, TValue>*/
+public class Blackboard<TKey, TValue> : ICollection<BlackboardPair<TKey, TValue>>
 {
     private struct Entry // Holds actual data of Blackboard.
     {
@@ -33,6 +32,8 @@ public class Blackboard<TKey, TValue> /*: ICollection<BlackboardPair<TKey, TValu
     private int freeCount; // Count of all free entries.
     private readonly IEqualityComparer<TKey> comparer; // For EqualityComparer.Default optimization to use IEquatable if there is one.
     private object? _syncRoot;
+
+    public IEqualityComparer<TKey> Comparer => comparer;
 
 
     #region Constructors
@@ -78,101 +79,39 @@ public class Blackboard<TKey, TValue> /*: ICollection<BlackboardPair<TKey, TValu
     #endregion
 
     #region Interfaces
-    /*
-    public IEqualityComparer<TKey> Comparer => comparer;
     
     public int Count => count - freeCount;
 
-    // // ICollection<TKey> IDictionary<TKey, TValue>.Keys {
-    // //     get {                
-    // //         keys ??= new KeyCollection(this);                
-    // //         return keys;
-    // //     }
-    // // }
-
-    // // IEnumerable<TKey> IReadOnlyDictionary<TKey, TValue>.Keys {
-    // //     get {                
-    // //         if (keys == null) keys = new KeyCollection(this);                
-    // //         return keys;
-    // //     }
-    // // }
-
-    // // public ValueCollection Values {
-    // //     get {
-    // //         if (values == null) values = new ValueCollection(this);
-    // //         return values;
-    // //     }
-    // // }
-
-    // // ICollection<TValue> IDictionary<TKey, TValue>.Values {
-    // //     get {                
-    // //         if (values == null) values = new ValueCollection(this);
-    // //         return values;
-    // //     }
-    // // }
-
-    // // IEnumerable<TValue> IReadOnlyDictionary<TKey, TValue>.Values {
-    // //     get {                
-    // //         if (values == null) values = new ValueCollection(this);
-    // //         return values;
-    // //     }
-    // // }
+    bool ICollection<BlackboardPair<TKey,TValue>>.IsReadOnly => false;
 
 
-    // bool IDictionary<TKey, TValue>.Remove(TKey key) 
-    // {
-    //     return TryDetach(key, out var _);
-    // }
-
-
-    // TValue IDictionary<TKey, TValue>.this[TKey key]
-    // {
-    //     get => Peek(key);
-    //     set => Pin(key, value);
-    // }
-
-
-    // bool IDictionary<TKey, TValue>.TryGetValue(TKey key, [NotNullWhen(true)] out TValue value)
-    // {
-    //     return TryPeek(key, out value);
-    // }
-
-
-    // void IDictionary<TKey, TValue>.Add(TKey key, TValue value)
-    // {
-    //     Pin(key, value);
-    // }
-
-
-    void ICollection<BlackboardPair<TKey, TValue>>.Add(BlackboardPair<TKey, TValue>)
+    void ICollection<BlackboardPair<TKey, TValue>>.Add(BlackboardPair<TKey, TValue> blackboardPair)
     {
-        int entryIdx = FindEntry(keyValuePair.Key);
+        int entryIdx = FindEntry(blackboardPair.Key);
         if (entryIdx > -1)
         {
-
+            
         }
     }
 
 
-    bool ICollection<BlackboardPair<TKey, TValue>>.Contains(BlackboardPair<TKey, TValue> item)
+    bool ICollection<BlackboardPair<TKey, TValue>>.Contains(BlackboardPair<TKey, TValue> blackboardPair)
     {
-        int entryIdx = FindEntry(keyValuePair.Key);
+        int entryIdx = FindEntry(blackboardPair.Key);
         if (entryIdx > -1)
         {
-            var comparer = EqualityComparer<TValue>.Default;
-            foreach (var item in entries[entryIdx].Values)
-            {
-                if (keyValuePair.Value == null && item == null) { return true; }
-                if (comparer.Equals(item, keyValuePair.Value)) { return true; }
-            }
+            return blackboardPair.Equals(new(entries[entryIdx].key, entries[entryIdx].Values));
         }
+
         return false;
     }
 
-    bool ICollection<KeyValuePair<TKey, TValue>>.Remove(KeyValuePair<TKey, TValue> keyValuePair)
+
+    bool ICollection<BlackboardPair<TKey, TValue>>.Remove(BlackboardPair<TKey, TValue> blackboardPair)
     {
-        return TryDetach(keyValuePair.Key, out var _);
+        return TryDetach(blackboardPair.Key, out var _);
     }
+
 
     public void Clear() {
         if (count > 0) {
@@ -185,59 +124,41 @@ public class Blackboard<TKey, TValue> /*: ICollection<BlackboardPair<TKey, TValu
         }
     }
 
-    // public bool ContainsKey(TKey key) {
-    //     return FindEntry(key) >= 0;
-    // }
 
-    // public bool ContainsValue(TValue value) {
-    //     if (value == null) {
-    //         for (int i = 0; i < count; i++) {
-    //             if (entries[i].hashCode >= 0 && entries[i].value == null) return true;
-    //         }
-    //     }
-    //     else {
-    //         EqualityComparer<TValue> c = EqualityComparer<TValue>.Default;
-    //         for (int i = 0; i < count; i++) {
-    //             if (entries[i].hashCode >= 0 && c.Equals(entries[i].value, value)) return true;
-    //         }
-    //     }
-    //     return false;
-    // }
-
-    // private void CopyTo(KeyValuePair<TKey,TValue>[] array, int index) {
-    //     if (array == null) {
-    //         ThrowHelper.ThrowArgumentNullException(ExceptionArgument.array);
-    //     }
+    public void CopyTo(BlackboardPair<TKey,TValue>[] array, int index) 
+    {
+        ArgumentNullException.ThrowIfNull(array);
         
-    //     if (index < 0 || index > array.Length ) {
-    //         ThrowHelper.ThrowArgumentOutOfRangeException(ExceptionArgument.index, ExceptionResource.ArgumentOutOfRange_NeedNonNegNum);
-    //     }
+        if (index < 0 || index > array.Length ) 
+        {
+            throw new IndexOutOfRangeException();
+        }
 
-    //     if (array.Length - index < Count) {
-    //         ThrowHelper.ThrowArgumentException(ExceptionResource.Arg_ArrayPlusOffTooSmall);
-    //     }
+        if (array.Length - index < Count)
+        {
+            throw new ArgumentException("Destination array was not long enough. Check the destination index, length, and the array's lower bounds.", nameof(array));
+        }
 
-    //     int count = this.count;
-    //     Entry[] entries = this.entries;
-    //     for (int i = 0; i < count; i++) {
-    //         if (entries[i].hashCode >= 0) {
-    //             array[index++] = new KeyValuePair<TKey,TValue>(entries[i].key, entries[i].value);
-    //         }
-    //     }
-    // }
-
-
-    // public Enumerator GetEnumerator() {
-    //     return new Enumerator(this, Enumerator.KeyValuePair);
-    // }
-
-
-    // IEnumerator<KeyValuePair<TKey, TValue>> IEnumerable<KeyValuePair<TKey, TValue>>.GetEnumerator() {
-    //     return new Enumerator(this, Enumerator.KeyValuePair);
-    // }        
+        int count = this.count;
+        Entry[] entries = this.entries;
+        for (int i = 0; i < count; i++) 
+        {
+            if (entries[i].hashCode >= 0)
+            {
+                array[index++] = new BlackboardPair<TKey, TValue>(entries[i].key, entries[i].Values);
+            }
+        }
+    }
 
 
-    // bool ICollection<KeyValuePair<TKey,TValue>>.IsReadOnly => false;
+    public IEnumerator<BlackboardPair<TKey, TValue>> GetEnumerator()
+    {
+        return new Enumerator(this, version);
+    }
+
+
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+
 
     // void ICollection<KeyValuePair<TKey,TValue>>.CopyTo(KeyValuePair<TKey,TValue>[] array, int index) => CopyTo(array, index);
 
@@ -403,7 +324,7 @@ public class Blackboard<TKey, TValue> /*: ICollection<BlackboardPair<TKey, TValu
     //         Remove((TKey)key);
     //     }
     // }
-    */
+    
     #endregion
     
 
@@ -516,13 +437,17 @@ public class Blackboard<TKey, TValue> /*: ICollection<BlackboardPair<TKey, TValu
         buckets[targetBucket] = index;
         version++;
 
+
+//         // The point of Randomized String Hashing is when some bad guys send many string requests with the same hashcode to Web Service
+//         // for example, it will fall down while traversing all entries[] because of hashcode collisions. Randomized string hashing
+//         // prevent us from this.
 // #if FEATURE_RANDOMIZED_STRING_HASHING
 
 // #if FEATURE_CORECLR
 //         // In case we hit the collision threshold we'll need to switch to the comparer which is using randomized string hashing
 //         // in this case will be EqualityComparer<string>.Default.
 //         // Note, randomized string hashing is turned on by default on coreclr so EqualityComparer<string>.Default will 
-//         // be using randomized string hashing
+//         // be using randomized string hashing.
 
 //         if (collisionCount > HashHelpers.HashCollisionThreshold && comparer == NonRandomizedStringEqualityComparer.Default) 
 //         {
@@ -638,6 +563,64 @@ public class Blackboard<TKey, TValue> /*: ICollection<BlackboardPair<TKey, TValu
             }
         }
         return -1;
+    }
+
+
+    internal struct Enumerator : IEnumerator<BlackboardPair<TKey, TValue>>
+    {
+        private Blackboard<TKey, TValue> blackboard;
+        private int version; // To prevent Blacboard changing while enumerating.
+        private int index;
+        private BlackboardPair<TKey, TValue> current;
+
+        public Enumerator(Blackboard<TKey, TValue> blackboard, int version)
+        {
+            this.blackboard = blackboard;
+            this.version = version;
+        }
+
+        public BlackboardPair<TKey, TValue> Current => current;
+        object IEnumerator.Current => current;
+
+
+         public bool MoveNext() 
+        {
+            if (version != blackboard.version) 
+            {
+                throw new InvalidOperationException("Collection was modified; enumeration operation may not execute.");
+            }
+
+            // Use unsigned comparison since we set index to blackboard.count+1 when the enumeration ends.
+            // blackboard.count+1 could be negative if dictionary.count is Int32.MaxValue.
+            while ((uint)index < (uint)blackboard.count) 
+            {
+                if (blackboard.entries[index].hashCode >= 0) {
+                    current = new BlackboardPair<TKey, TValue>(blackboard.entries[index].key, blackboard.entries[index].Values);
+                    index++;
+                    return true;
+                }
+
+                index++;
+            }
+
+            index = blackboard.count + 1;
+            current = new();
+            return false;
+        }
+
+        public void Reset()
+        {
+            if (version != blackboard.version)
+            {
+                throw new InvalidOperationException("Collection was modified; enumeration operation may not execute.");
+            }
+
+            index = 0;
+            current = new();
+        }
+
+
+        public void Dispose() {}
     }
 
 }
